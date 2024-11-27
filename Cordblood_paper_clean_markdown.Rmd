@@ -13,7 +13,7 @@ setwd("~/Documents/data/CB Clones Analysis/Final")
 set.seed(19890623)
 ```
 
-#load packages needed
+# Load packages needed
 ```{r}
 library(CellMembrane)
 library(RIRA) 
@@ -45,7 +45,7 @@ Rdiscvr::SetLabKeyDefaults(baseUrl = 'https://prime-seq.ohsu.edu', defaultFolder
 labkey.setDefaults(apiKey="e2e7adc179872bed31e7645be4f77ae9cef7904ef277295c08ba62e2ee93fd40")
 ```
 
-#Load necessary functions for pseudobulk
+# Load necessary functions for pseudobulk
 ```{r}
 RunPairwiseContrasts <- function(fit, test.use, logFC_threshold = 1){
   #create a nx2 array of all possible unique pairwise combinations of contrasts
@@ -64,7 +64,7 @@ RunPairwiseContrasts <- function(fit, test.use, logFC_threshold = 1){
 }
 ```
 
-#Load necessary TCR functions
+# Load necessary TCR functions
 ```{r}
 Plot_bar_topvalues <- function(so = NULL, feat = NULL, title="", thr = 1){
   if(is.null(so)) print("give a seurat object to so")
@@ -120,7 +120,7 @@ plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL,
 ```
 
 
-#Load data files if changes
+# Load data files if changes
 ```{r}
 #saveRDS(seuratObj, file = "./CB_paper_seurat.rds")
 #saveRDS(seuratObjTRAVpos, file = "./CB_paper_TRAVpos.rds")
@@ -128,7 +128,7 @@ plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL,
 #saveRDS(seuratObj@meta.data, file = "./metadata.rds")
 ```
 
-#Load data files
+# Load data files
 ```{r}
 fn <- 'CB_paper_seurat.rds'
 seuratObj <- readRDS(fn)
@@ -143,7 +143,7 @@ meta <- readRDS("./metadata.rds")
 ```
 
 _____________
-#Figure 1a-c
+# Figure 1a-c
 ```{r, echo = TRUE, fig.show='asis'}
 a1 <- DimPlot(seuratObj, group.by = "Donor", cols = c("dark red", "dark blue")) +
   ggtitle("")  +  guides(color = guide_legend(override.aes = list(size=10), ncol=1)) +
