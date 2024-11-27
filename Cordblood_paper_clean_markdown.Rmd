@@ -1,0 +1,1251 @@
+---
+title: "Cord Blood Paper Revised Markdown"
+output: html_document
+date: "2024-11-06"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, results = "hide", fig.show = 'hide')
+setwd("~/Documents/data/CB Clones Analysis/Final")
+set.seed(19890623)
+```
+
+#load packages needed
+```{r}
+library(CellMembrane)
+library(RIRA) 
+library(Seurat)
+library(Rdiscvr)
+library(Rlabkey)
+library(UCell)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(tibble)
+library(ggpubr)
+library(enrichR)
+library(readxl)
+library(forcats)
+library(ggpubr)
+library(ggstatsplot)
+setEnrichrSite("Enrichr") # Human genes
+dbs <- listEnrichrDbs()
+dbs_go <- c("GO_Biological_Process_2021")
+dbs_pathway <- c("MSigDB_Hallmark_2020", "BioCarta_2016", "Reactome_2022", "DSigDB", "WikiPathways_2019_Human", "KEGG_2021_Human", "DisGeNET", "WikiPathway_2021_Human", "HDSigDB_Human_2021")
+
+workDir <- "~/Documents/data/Ex-vivo CB Analysis"
+if (!dir.exists(workDir)) {
+  dir.create(workDir, recursive = T)
+}
+
+Rdiscvr::SetLabKeyDefaults(baseUrl = 'https://prime-seq.ohsu.edu', defaultFolder = 'Labs/Bimber/Collaborations/Lewinsohn')
+labkey.setDefaults(apiKey="e2e7adc179872bed31e7645be4f77ae9cef7904ef277295c08ba62e2ee93fd40")
+```
+
+#Load necessary functions for pseudobulk
+```{r}
+RunPairwiseContrasts <- function(fit, test.use, logFC_threshold = 1){
+  #create a nx2 array of all possible unique pairwise combinations of contrasts
+  contrasts <- t(utils::combn(colnames(fit$design), m = 2))
+  results <- future.apply::future_lapply(split(contrasts, 1:nrow(contrasts)) , FUN = function(x){
+    up_contrast<- x[[1]]
+    down_contrast <- x[[2]]
+    contrast_name <- paste0(up_contrast, "-", down_contrast)
+    print(paste("Performing DE for: ", contrast_name))
+    contrast <- limma::makeContrasts(contrasts = contrast_name, levels = fit$design)
+    result <- PerformDifferentialExpression(fit, contrast, contrast_name, logFC_threshold = logFC_threshold, FDR_threshold = 0.05, test.use = test.use)
+  })
+  #use contrast names to label the results list
+  names(results) <- paste0(contrasts[,1],  "-", contrasts[,2])
+  return(results)
+}
+```
+
+#Load necessary TCR functions
+```{r}
+Plot_bar_topvalues <- function(so = NULL, feat = NULL, title="", thr = 1){
+  if(is.null(so)) print("give a seurat object to so")
+  if(is.null(feat)) print("give a meta feature to tabulate to feat")
+  print(feat)
+  
+  TCR_tempVec <- so@meta.data[, feat]
+
+  TCR_tempVec_tab <- sort(table(TCR_tempVec), decreasing = T)
+
+  TCR_tempVec_tab_gt1 = TCR_tempVec_tab[TCR_tempVec_tab>thr]
+
+  ggplot(reshape2::melt(TCR_tempVec_tab_gt1) , aes(TCR_tempVec, value)) +
+    ggplot2::geom_bar(stat="identity") + ggplot2::theme_bw() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    ggplot2::ggtitle(paste0(title, "\nlen=",length(TCR_tempVec_tab_gt1) )) 
+}
+
+plot_bar_pairtopvalues_facetted <-function(so = NULL, feat1 = NULL, feat2 = NULL, title="", thr = 1){
+  if(is.null(so)) print("give a seurat object to so")
+  if(is.null(feat1)) print("give a meta feature to tabulate to feat")
+  if(is.null(feat2)) print("give a meta feature to tabulate to feat")
+  
+  PairWiseDF <- subset(data.frame(table(so@meta.data[, feat1], so@meta.data[,feat2])), Freq > thr)
+
+# need to log since the difference betwwen the biggest and lowest counts is huge
+
+#facetted 
+ ggplot(PairWiseDF , aes(Var1, log10(Freq), fill=Var2)) +
+    ggplot2::geom_bar(stat="identity") + ggplot2::theme_bw() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    ggplot2::ggtitle(paste0(title, "\nlen=",nrow(PairWiseDF) )) + facet_wrap(~Var2)
+ 
+
+}
+
+plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL, title="", thr = 1){
+  if(is.null(so)) print("give a seurat object to so")
+  if(is.null(feat1)) print("give a meta feature to tabulate to feat")
+  if(is.null(feat2)) print("give a meta feature to tabulate to feat")
+  
+  PairWiseDF <- subset(data.frame(table(so@meta.data[, feat1], so@meta.data[,feat2])), Freq > thr)
+
+# need to log since the difference betwwen the biggest and lowest counts is huge
+
+#singular and stacked
+  ggplot(PairWiseDF , aes(Var1, log10(Freq), fill=Var2)) +
+    ggplot2::geom_bar(stat="identity", position="stack") + ggplot2::theme_bw() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    ggplot2::ggtitle(paste0(title, "\nlen=",nrow(PairWiseDF) )) 
+  
+}
+```
+
+
+#Load data files if changes
+```{r}
+#saveRDS(seuratObj, file = "./CB_paper_seurat.rds")
+#saveRDS(seuratObjTRAVpos, file = "./CB_paper_TRAVpos.rds")
+#saveRDS(seuratObjTRAVneg, file = "./CB_paper_TRAVneg.rds")
+#saveRDS(seuratObj@meta.data, file = "./metadata.rds")
+```
+
+#Load data files
+```{r}
+fn <- 'CB_paper_seurat.rds'
+seuratObj <- readRDS(fn)
+
+fn <- 'CB_paper_TRAVpos.rds'
+seuratObjTRAVpos <- readRDS(fn)
+
+fn <- 'CB_paper_TRAVneg.rds'
+seuratObjTRAVneg <- readRDS(fn)
+
+meta <- readRDS("./metadata.rds")
+```
+
+_____________
+#Figure 1a-c
+```{r, echo = TRUE, fig.show='asis'}
+a1 <- DimPlot(seuratObj, group.by = "Donor", cols = c("dark red", "dark blue")) +
+  ggtitle("")  +  guides(color = guide_legend(override.aes = list(size=10), ncol=1)) +
+  theme(legend.text = element_text(size = 20)) + 
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(), 
+        legend.position = c(.95, .95),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6))
+
+b1 <- DimPlot(seuratObj, group.by = "ClusterNames_0.4", label = T, label.size = 8) + 
+  ggtitle("") + 
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        legend.text = element_text(size = 20),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(), 
+        legend.position = c(.95, .95),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6))
+
+df <- data.frame(table(seuratObj$ClusterNames_0.4, seuratObj$Donor))
+colnames(df) = c("Cluster", "Donor Age", "Count")
+
+df1 <- data.frame(table(seuratObj$Donor))
+colnames(df1) = c("Donor Age", "Total")
+
+df2 <- left_join(df, df1, by = "Donor Age")
+df2$Proportion <- df2$Count/df2$Total
+
+c1 <- df2 %>% 
+  ggplot(aes(x = Cluster, 
+             y = Proportion, 
+             fill = `Donor Age`)) + 
+  geom_bar(position = "fill", stat = "identity") + 
+  scale_fill_manual(values = c("dark red", "dark blue")) +
+  theme(legend.text = element_text(size = 20), 
+        axis.title.x = element_text(size = 20), 
+        axis.title.y = element_text(size = 20), 
+        axis.text.y = element_text(size = 14), 
+        axis.text.x = element_text(size = 14), 
+        legend.title = element_blank())
+
+a1
+b1
+c1
+```
+
+#Figure 1d
+```{r, echo = TRUE, fig.show='asis'}
+d1a <- FeaturePlot(seuratObj, features = c("adt_CD4"), max.cutoff = 'q95', min.cutoff = 'q05') +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("CD4 Prt Exp")
+
+d1b <- FeaturePlot(seuratObj, features = c("adt_CD26"), max.cutoff = 'q95', min.cutoff = 'q05') +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("CD8 Prt Exp")
+
+d1c <- FeaturePlot(seuratObj, features = c("adt_CD26"), max.cutoff = 'q95', min.cutoff = 'q05') +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("CD26 Prt Exp")
+
+d1d <- FeaturePlot(seuratObj, features = c("adt_CD161"), max.cutoff = 'q95', min.cutoff = 'q05') +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("CD161 Prt Exp")
+
+d1e <- FeaturePlot(seuratObj, features = c("adt_TCR-Va7.2"), max.cutoff = 'q95', min.cutoff = 'q05') +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("TRAV1-2 Prt Exp")
+
+d1 <- ggarrange(d1a, d1b, d1c, d1d, d1e, ncol = 2, nrow = 3)
+
+```
+
+#Figure 1e
+```{r, message = TRUE, fig.show='asis'}
+e1a <- FeaturePlot(seuratObj, features = c("TNF")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("TNF Gene Exp")
+
+e1b <- FeaturePlot(seuratObj, features = c("CCL4")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("CCL4 Gene Exp")
+
+e1c <- FeaturePlot(seuratObj, features = c("CCL5")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18))  +
+  ggtitle("CCL5 Gene Exp")
+
+e1d <- FeaturePlot(seuratObj, features = c("GNLY")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("GNLY Gene Exp")
+
+e1e <- FeaturePlot(seuratObj, features = c("GZMA")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("GZMA Gene Exp")
+
+e1f <- FeaturePlot(seuratObj, features = c("PRF1")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("PRF1 Gene Exp")
+
+e1 <- ggarrange(e1a, e1b, e1c, e1d, e1e, e1f, ncol = 2, nrow = 3)
+
+
+d1 
+e1
+```
+
+#generate pseudobulk analysis and DEGs between cord blood and adult MR1T
+```{r}
+pbulk <- CellMembrane::PseudobulkSeurat(seuratObj, groupFields = c("Donor", "cDNA_ID"))
+
+model_matrix <- CellMembrane::DesignModelMatrix(pbulk, contrast_columns = c("Donor"), sampleIdCol = "cDNA_ID")
+
+fit <- CellMembrane::PerformGlmFit(pbulk, model_matrix, assayName = "RNA", test.use = "QLF")
+
+de <- RunPairwiseContrasts(fit, test.use = "QLF")
+
+de_df <- de$`Adult-Cordblood`$differential_expression$table
+DE_PBMC <- de$`Adult-Cordblood`$differential_expression$table
+DE_PBMC <- de_df[de_df$FDR < 0.2, ]
+```
+
+```{r}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Adult"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Cord blood"
+```
+
+#Save supplemental table 4
+```{r}
+write.csv(DE_PBMC, "Supplemental Table 4.csv")
+```
+
+#Volcano plot for DEGs of Adult vs Cordblood
+```{r, echo = TRUE, fig.show='asis'}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      & DE_PBMC$gene %in% c("GZMK", "GZMA", "GNLY", "GZMM", "PRF1", "GNLY",  "GZMH", "CCR1", "CCR2", "CCR5", "CCR6", "CCL5", "CCL20", "CCL3L3", "CCL3", "CCL4", "CXCR6", "NKG7", "KLRF1", "KLRD1", "KLRC1", "KLRB1", "IL12RB1", "IL12RB2",  "IFNL1", "TNF", "IFNG-AS1", "IFNGR1", "IL18RAP",  "CD244", "CD70", "CD160", "IL26", "CD69", "IL32", "TBX21")
+                      ] <- "Adult"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05  
+                      & DE_PBMC$gene %in% c("TGFB1", "SELL", "CCR7", "LEF1", "TCF7", "IL13", "SATB1", "CCR9", "TOX")
+                      ] <- "Cord blood"
+
+DE_PBMC$delabel <- NA
+DE_PBMC$delabel[DE_PBMC$diffexpressed != "NO"] <- DE_PBMC$gene[DE_PBMC$diffexpressed != "NO"]
+
+f1 <- DE_PBMC %>% ggplot(aes(logFC, -log10(FDR), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+    geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("dark red", "dark blue", "light grey")) + 
+  theme(legend.title = element_blank(), legend.text = element_text(size = 14), axis.title.x = element_text(size = 14), axis.title.y = element_text(size = 14)) +
+  labs(x = "Log Fold Change")
+f1
+```
+
+#GO pathway analysis of DEGs from adults vs cord blood MR1T
+```{r, echo = TRUE, fig.show='asis'}
+genes_up <- de_df[
+  de_df$logFC >=0.5 & de_df$FDR < 0.05,"gene"]
+
+genes_down <- de_df[
+  de_df$logFC <=-0.5 & de_df$FDR < 0.05,"gene"]
+
+#up in adult MR1T
+enriched_go <- enrichr(c(genes_up), dbs_go)
+enriched_pathway <- enrichr(c(genes_up), dbs_pathway)
+g1 <- plotEnrich(enriched_go[[1]], 
+                 showTerms = 10, 
+                 numChar = 80, 
+                 y = "Ratio", 
+                 orderBy = "P.value") + 
+  theme(axis.text.y = element_text(size = 16), 
+        plot.title = element_text(size = 30), 
+        axis.title.y = element_blank(), 
+        axis.title.x = element_text(size = 14), 
+        legend.title = element_text(hjust = 0.5, size = 20), 
+        legend.text = element_text(size = 14)) + 
+  ggtitle("")
+
+g1
+```
+
+#Figure 1f-g
+```{r}
+ggarrange(f1, g1, ncol = 1, nrow = 2)
+```
+
+
+#Figure 1h-i
+```{r, echo = TRUE, fig.show='asis'}
+seuratObj <- Seurat::AddModuleScore(seuratObj, features = list(RIRA::GetGeneSet("Cytotoxicity")), name = "MySignature", ctrl = 5)
+
+seuratObj <- UCell::AddModuleScore_UCell(seuratObj, features = list("MySignature" = RIRA::GetGeneSet("Cytotoxicity")))
+
+h1 <- VlnPlot(seuratObj, 
+              features = "MySignature1", 
+              group.by = "Donor")+
+  stat_summary(fun.y = median, 
+               geom='point', 
+               size = 25, 
+               colour = "dark red", 
+               shape = 95) + 
+  theme(legend.position = 'none',
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 18)) +
+  ggtitle("Cytotoxicity")
+
+Idents(seuratObj) = "Donor"
+
+i1 <- FeaturePlot(seuratObj, 
+                  features = "MySignature1", 
+                  label = TRUE, 
+                  label.color = "black", 
+                  label.size = 10) + 
+  ggtitle("Cytotoxicity") +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank()) +
+  scale_colour_gradientn(colours = 
+                           c("#2E5DAA", "dodgerblue", "lightblue", "gold", "red", "darkred"))
+
+
+ggarrange(h1, i1, ncol = 2, nrow = 1)
+
+```
+
+#Getting statistics for cytotoxicity score
+```{r, echo = TRUE, fig.show='asis'}
+ggbetweenstats(
+  data  = seuratObj@meta.data[sample(1:nrow(seuratObj@meta.data), 3500),],
+  x    = "Donor",
+  y    = "Cytotoxicity_UCell",
+  title = "Cytotoxicity across Donors"
+)
+```
+
+__________
+#Supplemental Figure 2
+```{r}
+DefaultAssay(seuratObj) = "ADT"
+head(GetAssayData(seuratObj, slot = "data")[, 1:5])
+
+plot(density(GetAssayData(seuratObj, slot = "data")["CD8", ]))
+plot(density(GetAssayData(seuratObj, slot = "data")["CD4", ]))
+#Double Neg
+seuratObj$CD_gate = "neg"
+seuratObj$CD_gate[GetAssayData(seuratObj, slot = "data")["CD4", ] < 1.4 & GetAssayData(seuratObj, slot = "data")["CD8", ] < 1.8] = "doubleneg"
+
+seuratObj$CD_gate[GetAssayData(seuratObj, slot = "data")["CD4", ] > 1.4 & GetAssayData(seuratObj, slot = "data")["CD8", ] > 1.8] = "doublepos"
+
+seuratObj$CD_gate[GetAssayData(seuratObj, slot = "data")["CD4", ] < 1.4 & GetAssayData(seuratObj, slot = "data")["CD8", ] > 1.8] = "CD8"
+
+seuratObj$CD_gate[GetAssayData(seuratObj, slot = "data")["CD4", ] > 1.4 & GetAssayData(seuratObj, slot = "data")["CD8", ] < 1.8] = "CD4"
+
+df1 <- data.frame(table(seuratObj$CD_gate, seuratObj$Donor, seuratObj$TRAV))
+colnames(df1) = c("CD8", "Donor", "TRAV", "Frequency")
+
+#barplot (not shown in paper)
+CD8 <- df1 %>% 
+  filter(Donor == "Cordblood") %>% 
+  ggplot(aes(x = TRAV, y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", position = "fill") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, size = 24),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14)) +
+  ggtitle("Cord Blood") | 
+  df1 %>% 
+  filter(Donor == "Adult") %>% 
+  ggplot(aes(x = TRAV, y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", position = "fill") +
+  ggtitle("Adult")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 24),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        legend.title = element_text(size = 16, hjust = 0.5),
+        legend.text = element_text(size = 14)) 
+CD8
+
+DefaultAssay(seuratObj) = "RNA"
+```
+
+```{r, echo = TRUE, fig.show='asis'}
+CBTRAV <- df1 %>% 
+  filter(Donor == "Cordblood") %>% 
+  filter(TRAV == "TRAV1-2") %>% 
+  ggplot(aes(x = "", y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood TRAV1-2") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+CBnTRAV <- df1 %>% 
+  filter(Donor == "Cordblood") %>% 
+  filter(TRAV == "non-TRAV1-2") %>% 
+  ggplot(aes(x = "", y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood non-TRAV1-2") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+ATRAV <- df1 %>% 
+  filter(Donor == "Adult") %>% 
+  filter(TRAV == "TRAV1-2") %>% 
+  ggplot(aes(x = "", y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult TRAV1-2") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+AnTRAV <- df1 %>% 
+  filter(Donor == "Adult") %>% 
+  filter(TRAV == "non-TRAV1-2") %>% 
+  ggplot(aes(x = "", y = Frequency, fill = CD8)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult non-TRAV1-2") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+ggarrange(CBTRAV, CBnTRAV, ATRAV, AnTRAV, ncol = 2, nrow = 2)
+```
+
+
+#Figure 2 - Cord blood TCR Diversity
+##Making TRAV1-2,TRAV Column for dual alpha expressing MR1T cells
+```{r, echo = TRUE, fig.show='asis'}
+meta_CB <- meta %>% 
+  filter(Donor == "Cordblood")
+p1 <- data.frame(sort(table(meta_CB$TRA_V), decreasing = T))
+rownames(p1) <- p1$Var1
+p1$TRAV <- p1$Var1
+p1$TRAV <- ifelse(p1$TRAV %in% c("TRAV1-1,TRAV1-2", "TRAV1-2,TRAV10", "TRAV1-2,TRAV12-1", "TRAV1-2,TRAV12-2", "TRAV1-2,TRAV12-3", "TRAV1-2,TRAV12-3,TRAV26-2", "TRAV1-2,TRAV13-1", "TRAV1-2,TRAV13-2",  "TRAV1-2,TRAV16", "TRAV1-2,TRAV17", "TRAV1-2,TRAV14/DV4", "TRAV1-2,TRAV14/DV4,TRAV26-2", "TRAV1-2,TRAV19", "TRAV1-2,TRAV2", "TRAV1-2,TRAV20", "TRAV1-2,TRAV21", "TRAV1-2,TRAV23/DV6", "TRAV1-2,TRAV25", "TRAV1-2,TRAV26-1", "TRAV1-2,TRAV26-2", "TRAV1-2,TRAV29/DV5", "TRAV1-2,TRAV3", "TRAV1-2,TRAV39", "TRAV1-2,TRAV4", "TRAV1-2,TRAV5", "TRAV1-2,TRAV6", "TRAV1-2,TRAV8-1", "TRAV1-2,TRAV8-2", "TRAV1-2,TRAV8-3", "TRAV1-2,TRBV8-4", "TRAV1-2,TRAV8-6", "TRAV1-2,TRAV9-2"), "TRAV1-2,TRAV", rownames(p1))
+
+
+p1 <- p1 %>% 
+  group_by(TRAV) %>% 
+  summarise(Freq = sum(Freq))
+p1 <- p1[order(p1$Freq, decreasing = T), ]
+
+p2 <- p1 %>%
+  filter(Freq > 2) 
+
+ga <- p2 %>% 
+  ggplot(aes(x = "", y = Freq, fill = reorder(TRAV, -Freq))) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood TRAV") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+meta_A <- meta %>% 
+  filter(Donor == "Adult")
+p3 <- data.frame(sort(table(meta_A$TRA_V), decreasing = T))
+
+rownames(p3) <- p3$Var1
+p3$TRAV <- p3$Var1
+p3$TRAV <- ifelse(p3$TRAV %in% c("TRAV1-1,TRAV1-2", "TRAV1-2,TRAV10", "TRAV1-2,TRAV12-1", "TRAV1-2,TRAV12-2", "TRAV1-2,TRAV12-3", "TRAV1-2,TRAV12-3,TRAV26-2", "TRAV1-2,TRAV13-1", "TRAV1-2,TRAV13-2",  "TRAV1-2,TRAV16", "TRAV1-2,TRAV17", "TRAV1-2,TRAV14/DV4", "TRAV1-2,TRAV14/DV4,TRAV26-2", "TRAV1-2,TRAV19", "TRAV1-2,TRAV2", "TRAV1-2,TRAV20", "TRAV1-2,TRAV21", "TRAV1-2,TRAV23/DV6", "TRAV1-2,TRAV25", "TRAV1-2,TRAV26-1", "TRAV1-2,TRAV26-2", "TRAV1-2,TRAV29/DV5", "TRAV1-2,TRAV3", "TRAV1-2,TRAV39", "TRAV1-2,TRAV4", "TRAV1-2,TRAV5", "TRAV1-2,TRAV6", "TRAV1-2,TRAV8-1", "TRAV1-2,TRAV8-2", "TRAV1-2,TRAV8-3", "TRAV1-2,TRBV8-4", "TRAV1-2,TRAV8-6", "TRAV1-2,TRAV9-2"), "TRAV1-2,TRAV", rownames(p3))
+
+
+p3 <- p3 %>% 
+  group_by(TRAV) %>% 
+  summarise(Freq = sum(Freq))
+
+p3 <- p3[order(p3$Freq, decreasing = T), ]
+
+p4 <- p3 %>%
+  filter(Freq > 2) 
+
+g2 <- p4 %>%
+  ggplot(aes(x = "", y = Freq, fill = reorder(TRAV, -Freq))) +
+  geom_bar(stat = "identity", width = 0.9) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult TRAV") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30))+
+  geom_bar(stat="identity", color='black') +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+ga | g2
+```
+
+#TRAJ
+```{r, echo = TRUE, fig.show='asis'}
+meta_CB <- meta %>% 
+  filter(Donor == "Cordblood")
+j1 <- data.frame(sort(table(meta_CB$TRA_J), decreasing = T))
+j2 <- j1 %>% 
+  filter(Freq > 2)
+
+g3 <- j2 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood TRAJ") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30))+
+  geom_bar(stat="identity", color='black') +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+meta_A <- meta %>% 
+  filter(Donor == "Adult")
+j3 <- data.frame(sort(table(meta_A$TRA_J), decreasing = T))
+j4 <- j3 %>% 
+  filter(Freq > 2)
+
+g4 <- j4 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult TRAJ") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30))+
+  geom_bar(stat="identity", color='black') +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+g3 | g4
+```
+
+#CDR3a
+```{r, echo = TRUE, fig.show='asis'}
+meta_CB <- meta %>% 
+  filter(Donor == "Cordblood")
+ca1 <- data.frame(sort(table(meta_CB$TRA), decreasing = T))
+ca2 <- ca1 %>% 
+  filter(Freq > 0)
+
+g5 <- ca2 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood CDR3a") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30))+
+  geom_bar(stat="identity", color='black') +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+meta_A <- meta %>% 
+  filter(Donor == "Adult")
+ca3 <- data.frame(sort(table(meta_A$TRA), decreasing = T))
+ca4 <- ca3 %>% 
+  filter(Freq > 0)
+
+g6 <- ca4 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult CDR3a") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+g5 | g6
+```
+
+#TRBV
+```{r, echo = TRUE, fig.show='asis'}
+meta_CB <- meta %>% 
+  filter(Donor == "Cordblood")
+b1 <- data.frame(sort(table(meta_CB$TRB_V), decreasing = T))
+b2 <- b1 %>% 
+  filter(Freq > 2)
+
+g7 <- b2 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Cord Blood TRBV") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30))+
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+meta_A <- meta %>% 
+  filter(Donor == "Adult")
+b3 <- data.frame(sort(table(meta_A$TRB_V), decreasing = T))
+b4 <- b3 %>% 
+  filter(Freq > 2)
+
+g8 <- b4 %>% 
+  ggplot(aes(x = "", y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity", width = 0.9, color = "black") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  theme(legend.position = "none") +
+  ggtitle("Adult TRBV") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 30)) +
+  guides(fill=guide_legend(override.aes=list(colour=NA)))
+
+g7 | g8
+```
+
+#Figure 2a-f
+```{r, echo = TRUE, fig.show='asis'}
+Figure2 <- ggarrange(ga, g3, g7, g2, g4, g8, ncol = 3, nrow = 2)
+Figure2
+```
+
+#Figure 2 g-i
+##Below code gives tables and then manually copied into prism to graph
+```{r}
+richness <- function(x){
+  
+  sum(x > 0)
+}
+
+shannon <- function(x){
+  
+  rabund <- x[x>0]/sum(x)
+  -sum(rabund * log(rabund))
+}
+
+simpson <- function(x){
+  
+  n <- sum(x)
+  
+  sum(x * (x-1)/(x*(n-1)))
+}
+```
+
+#TRA
+```{r, echo = TRUE, results = 'asis'}
+#TRA
+df <- meta %>% 
+  filter(!is.na(TRA)) %>% 
+  subset(select = c(SubjectId, TRA))
+
+df1 <- data.frame(table(df$SubjectId, df$TRA))
+df1 <- df1 %>% filter(Freq > 0)
+
+df1 %>% 
+  group_by(Var1) %>% 
+  summarize(sobs = richness(Freq), 
+            shannon = shannon(Freq), 
+            simpson = simpson(Freq),
+            invsimpson = 1/simpson(Freq), 
+            n = sum(Freq))
+```
+
+#TRAJ
+```{r, echo = TRUE, results='asis'}
+#TRAJ
+df <- meta %>% 
+  filter(!is.na(TRA_J)) %>% 
+  subset(select = c(SubjectId, TRA_J))
+
+df1 <- data.frame(table(df$SubjectId, df$TRA_J))
+df1 <- df1 %>% filter(Freq > 0)
+
+df1 %>% 
+  group_by(Var1) %>% 
+  summarize(sobs = richness(Freq), 
+            shannon = shannon(Freq), 
+            simpson = simpson(Freq),
+            invsimpson = 1/simpson(Freq), 
+            n = sum(Freq))
+```
+
+#TRBV
+```{r, echo = TRUE, results='asis'}
+#TRBV
+df <- meta %>% 
+  filter(!is.na(TRB_V)) %>% 
+  subset(select = c(SubjectId, TRB_V))
+
+df1 <- data.frame(table(df$SubjectId, df$TRB_V))
+df1 <- df1 %>% filter(Freq > 0)
+
+df1 %>% 
+  group_by(Var1) %>% 
+  summarize(sobs = richness(Freq), 
+            shannon = shannon(Freq), 
+            simpson = simpson(Freq),
+            invsimpson = 1/simpson(Freq), 
+            n = sum(Freq))
+```
+
+#TRB
+```{r, echo = TRUE, results='asis'}
+#TRB
+df <- meta %>% 
+  filter(!is.na(TRB)) %>% 
+  subset(select = c(SubjectId, TRB))
+
+df1 <- data.frame(table(df$SubjectId, df$TRB))
+df1 <- df1 %>% filter(Freq > 0)
+
+df1 %>% 
+  group_by(Var1) %>% 
+  summarize(sobs = richness(Freq), 
+            shannon = shannon(Freq), 
+            simpson = simpson(Freq),
+            invsimpson = 1/simpson(Freq), 
+            n = sum(Freq))
+```
+
+#TRBJ
+```{r, echo = TRUE, results = 'asis'}
+#TRBJ
+df <- meta %>% 
+  filter(!is.na(TRB_J)) %>% 
+  subset(select = c(SubjectId, TRB_J))
+
+df1 <- data.frame(table(df$SubjectId, df$TRB_J))
+df1 <- df1 %>% filter(Freq > 0)
+
+df1 %>% 
+  group_by(Var1) %>% 
+  summarize(sobs = richness(Freq), 
+            shannon = shannon(Freq), 
+            simpson = simpson(Freq),
+            invsimpson = 1/simpson(Freq), 
+            n = sum(Freq))
+```
+
+#Supplemental Figure 4 - TRAV Surface Expression
+```{r, echo = TRUE, fig.show='asis'}
+seuratObjCB = subset(seuratObj, Donor == "Cordblood")
+seuratObjCBTCR = subset(seuratObjCB, TRAV %in% c("non-TRAV1-2", "TRAV1-2"))
+
+Supplemental4 <- VlnPlot(seuratObjCBTCR, features = "adt_TCR-Va7.2", group.by = "TRAV") + 
+  stat_summary(fun.y = median, geom='point', size = 25, colour = "dark red", shape = 95) +
+  theme(legend.position = 'none') + 
+  ggtitle("Cord Blood MR1T Cells Surface Protein Expression of TRAV1-2") +
+  theme(axis.title.x = element_blank())
+
+Supplemental4
+```
+
+#Supplemental - not shown. TRAJ usage of TRAV1-2 Positive vs Negative
+```{r}
+seuratObjCBTRAVneg = subset(seuratObjTRAVneg, Donor == "Cordblood")
+seuratObjATRAVneg = subset(seuratObjTRAVneg, Donor == "Adult")
+
+seuratObjCBTRAVpos = subset(seuratObjTRAVpos, Donor == "Cordblood")
+seuratObjATRAVpos = subset(seuratObjTRAVpos, Donor == "Adult")
+
+Plot_bar_topvalues(so=seuratObjCBTRAVpos, feat = "TRA_J", title = "CB TRAV1-2+ TRAJ Usage", thr = 1) | Plot_bar_topvalues(so=seuratObjCBTRAVneg, feat = "TRA_J", title = "CB TRAV1-2- TRAJ Usage", thr = 1)
+```
+
+#Figure 3D - DEGs of TRAV1-2+ vs non-TRAV1-2
+```{r}
+Idents(seuratObjCBTCR) = "TRAV"
+DE_PBMC  = FindMarkers(seuratObjCBTCR, ident.1 = c("TRAV1-2"), ident.2 = c("non-TRAV1-2"), logfc.threshold = 0.5, test.use = "wilcox", min.pct = 0, min.diff.pct = 0, min.cells.feature = 2, min.cells.group = 2)
+
+de_df <- DE_PBMC
+DE_PBMC <- tibble::rownames_to_column(DE_PBMC, "gene")
+```
+
+#GO pathways for DEGs between TRAV1-2+ and non-TRAV1-2 (not included in paper)
+```{r, echo = TRUE, fig.show='asis'}
+de_df$gene <- rownames(de_df)
+
+genes_up <- de_df[
+  de_df$avg_log2FC >=0.5 & de_df$p_val_adj < 0.05,"gene"]
+
+genes_down <- de_df[
+  de_df$avg_log2FC <=-0.5 & de_df$p_val_adj < 0.05,"gene"]
+
+enriched_go <- enrichr(c(genes_up), dbs_go)
+enriched_pathway <- enrichr(c(genes_up), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated Pathways in Cord blood TRAV1-2+ MR1T Cells")
+
+p1 <- plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated Pathways in Cord blood TRAV1-2+ MR1T Cells")
+
+enriched_go <- enrichr(c(genes_down), dbs_go)
+enriched_pathway <- enrichr(c(genes_down), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated Pathways in Cord blood TRAV1-2- MR1T Cells")
+
+p2 <- plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated Pathways in Cord Blood TRAV1-2- MR1T Cells")
+
+```
+
+#Generating supplemental table 5
+```{r}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05 
+                      ] <- "Cord blood TRAV1-2+ MR1T Cells"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05 
+                        ] <- "Cord Blood TRAV1-2- MR1T Cells"
+
+write.csv(DE_PBMC, "Supplemental Table 5.csv")
+```
+
+#Figure 3D - volcano plot of DEGs between TRAV1-2 and non-TRAV1-2 MR1Ts
+```{r, echo = TRUE, fig.show='asis'}
+#Volcano Plot
+DE_PBMC$diffexpressed <- ""
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05 
+                      & DE_PBMC$gene %in% c("TRAV1-2", "KLRB1", "NCR3", "TRBV6-1", "TRBV6-2", "TRBV6-4", "LMNA", "ANXA1", "GNA15", "SH2D2A", "RUNX3", "VIM", "PRNP", "KLRK1", "CSRNP1", "JUND", "FLNA", "ISG15", "ZBTB16", "FOS", "ZYX")
+                      ] <- "Cord blood TRAV1-2+ MR1T Cells"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05 
+                      #& DE_PBMC$gene %in% c()
+                        ] <- "Cord Blood TRAV1-2- MR1T Cells"
+
+DE_PBMC$delabel <- NA
+DE_PBMC$delabel[DE_PBMC$diffexpressed != ""] <- DE_PBMC$gene[DE_PBMC$diffexpressed != ""]
+
+Fig3D <- DE_PBMC %>% ggplot(aes(avg_log2FC, -log10(p_val_adj), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+    geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("light grey", "dark blue", "dark red"))+ggtitle("Differential Expression of Cord Blood TRAV1-2 Positive vs Negative MR1T Cells") +
+  theme(legend.title = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 18), 
+        axis.title.y = element_text(size = 18), 
+        legend.text = element_text(size = 14), 
+        plot.title = element_text(hjust = 0.5, size = 22)) 
+Fig3D
+```
+
+#Supplemental Figure 5 - Difference in TRAV1-2+ Adult vs Cord blood 
+```{r, echo = TRUE, fig.show='asis'}
+seuratObjTRAVpos <- 
+  Seurat::AddModuleScore(seuratObjTRAVpos, 
+                                           features = 
+                           list(RIRA::GetGeneSet("Cytotoxicity")), 
+                         name = "MySignature", ctrl = 5)
+
+seuratObjTRAVpos <- UCell::AddModuleScore_UCell(seuratObjTRAVpos, 
+                                                features = 
+                                                  list("MySignature" = 
+                                                      RIRA::GetGeneSet("Cytotoxicity")))
+
+Sup5a <- VlnPlot(seuratObjTRAVpos, 
+                 features = "MySignature1", 
+                 group.by = "Donor")+
+  stat_summary(fun.y = median, 
+               geom='point', 
+               size = 25,
+               colour = "dark red",
+               shape = 95)+ 
+  theme(legend.position = 'none', 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 14)) +
+  ggtitle("Cytotoxicity TRAV1-2+ Cells")
+
+Idents(seuratObjTRAVpos) = "Donor"
+Sup5b <- FeaturePlot(seuratObjTRAVpos, 
+                     features = "MySignature1", 
+                     label = TRUE, 
+                     label.color = "black", 
+                     label.size = 10) + 
+  ggtitle("Cytotoxicity TRAV1-2+ Cells") +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  scale_colour_gradientn(colours = 
+                           c("#2E5DAA", "dodgerblue", "lightblue", "gold", "red", "darkred"))
+
+Sup5a | Sup5b
+```
+
+#generate statistics for cytotoxicity score
+```{r, echo = TRUE, fig.show='asis'}
+ggbetweenstats(
+  data  = seuratObjTRAVpos@meta.data[sample(1:nrow(seuratObjTRAVpos@meta.data), 1100),],
+  x    = "Donor",
+  y    = "Cytotoxicity_UCell",
+  title = "Cytotoxicity across Donors TRAV1-2+"
+)
+```
+
+#Additional TRAV1-2 expression plots, not included in paper
+```{r}
+meta1 <- meta %>% 
+    filter(!is.na(TRA) & !is.na(TRB)) %>% 
+  filter(Donor == c("Adult"))
+meta1$TR_AB <- paste0(meta1$TRA, "__", meta1$TRB)
+p1 <- data.frame(sort(table(meta1$TR_AB), decreasing = T))
+
+
+meta2 <- meta %>% 
+    filter(!is.na(TRA) & !is.na(TRB)) %>% 
+  filter(Donor == "Cordblood")
+meta2$TR_AB <- paste0(meta2$TRA, "__", meta2$TRB)
+p2 <- data.frame(sort(table(meta2$TR_AB), decreasing = T))
+
+
+p3 <- p1 %>%  filter(Freq > 2) %>% ggplot(aes(x=Var1, y = Freq))+geom_col()+theme(axis.text.x=element_text(angle = 45, vjust=1, hjust=1), plot.title = element_text(hjust = 0.5, size = 24))+ggtitle("Adult")
+
+p4 <- p2 %>%  filter(Freq > 1) %>% ggplot(aes(x=Var1, y = Freq))+geom_col()+theme(axis.text.x=element_text(angle = 45, vjust=1, hjust=1), plot.title = element_text(hjust = 0.5, size = 24))+ggtitle("Cord Blood")
+
+p3 | p4 + facet_wrap(~Var1, nrow = 2, scales = "free_y")
+
+meta3 <- meta %>% 
+  filter(Donor == "Cordblood")
+p5 <- data.frame(sort(table(meta3$TRAV), decreasing = T))
+
+meta4 <- meta %>% 
+  filter(Donor == "Adult")
+p6 <- data.frame(sort(table(meta4$TRAV), decreasing = T))
+
+p7 <- p5 %>%  filter(Freq > 2) %>% ggplot(aes(x=Var1, y = Freq))+geom_col()+theme(axis.text.x=element_text(angle = 45, vjust=1, hjust=1), plot.title = element_text(hjust = 0.5, size = 24))+ggtitle("Cord Blood")
+
+p8 <- p6 %>%  filter(Freq > 2) %>% ggplot(aes(x=Var1, y = Freq))+geom_col()+theme(axis.text.x=element_text(angle = 45, vjust=1, hjust=1), plot.title = element_text(hjust = 0.5, size = 24))+ggtitle("Adult")
+
+p7 | p8
+
+ggarrange(p7, p8, ncol = 1, nrow = 2)
+```
+
+______________
+##Clone Analysis - second half of paper
+#Save clone analysis if changes
+```{r, fig.show='asis'}
+#saveRDS(seuratObj2, file = "./CB_clone_seurat.rds")
+```
+
+#Load single-cell MR1T clone seuratObj
+```{r}
+fn <- 'CB_clone_seurat.rds'
+seuratObj2 <- readRDS(fn)
+```
+
+#Figure 5A-F
+```{r, echo = TRUE, fig.show='asis'}
+Idents(seuratObj2) = "StimulationCellType"
+my_levels <- c("Adult Unstim", "Adult Stim", "CB Unstim", "CB Stim")
+seuratObj2@meta.data$StimulationCellType <- factor(x = seuratObj2@meta.data$StimulationCellType, levels = c("Adult Unstim", "Adult Stim", "CB Unstim", "CB Stim"))
+
+IFNG <- VlnPlot(seuratObj2, features = c("IFNG"), split.by = "StimulationCellType") + stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+TNF <- VlnPlot(seuratObj2, features = c("TNF"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+GZMB <- VlnPlot(seuratObj2, features = c("GZMB"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CCL3 <- VlnPlot(seuratObj2, features = c("CCL3"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CCL4 <- VlnPlot(seuratObj2, features = c("CCL4"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CSF2 <- VlnPlot(seuratObj2, features = c("CSF2"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+Fig5 <- ggarrange(IFNG, TNF, GZMB, CCL3, CCL4, CSF2)
+Fig5
+```
+
+#Supplemental Figure 8
+```{r}
+Idents(seuratObj2) = "SubjectId"
+
+IFNG <- VlnPlot(seuratObj2, features = c("IFNG"), split.by = "StimulationCellType") + stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+TNF <- VlnPlot(seuratObj2, features = c("TNF"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+GZMB <- VlnPlot(seuratObj2, features = c("GZMB"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CCL3 <- VlnPlot(seuratObj2, features = c("CCL3"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CCL4 <- VlnPlot(seuratObj2, features = c("CCL4"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+CSF2 <- VlnPlot(seuratObj2, features = c("CSF2"), split.by = "StimulationCellType") +
+  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20))
+
+Supp_Clone <- ggarrange(IFNG, TNF, GZMB, CCL3, CCL4, CSF2)
+Supp_Clone
+```
+
+
+#Figure 5g-h pseudobulk analysis
+```{r}
+pbulk <- CellMembrane::PseudobulkSeurat(seuratObj2, groupFields = c("StimulationCellType", "cDNA_ID"))
+
+model_matrix <- CellMembrane::DesignModelMatrix(pbulk, contrast_columns = c("StimulationCellType"), sampleIdCol = "cDNA_ID")
+
+fit <- CellMembrane::PerformGlmFit(pbulk, model_matrix, assayName = "RNA", test.use = "QLF")
+
+de <- RunPairwiseContrasts(fit, test.use = "QLF")
+```
+
+```{r}
+de_df <- de$`Adult.Unstim-CB.Unstim`$differential_expression$table
+DE_PBMC <- de$`Adult.Unstim-CB.Unstim`$differential_expression$table
+DE_PBMC <- de_df[de_df$FDR < 0.2, ]
+```
+
+#generating supplemental table 6
+```{r}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Adult Unstimulated"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Cordblood Unstimulated"
+
+table(DE_PBMC$diffexpressed)
+```
+
+```{r}
+write.csv(DE_PBMC, "Supplemental Table 6.csv")
+```
+
+##Pathway analysis (not shown in paper)
+```{r, echo = TRUE, fig.show='asis'}
+genes_up <- DE_PBMC[
+  DE_PBMC$logFC >=0.5 & DE_PBMC$FDR < 0.05,"gene"]
+
+genes_down <- DE_PBMC[
+  DE_PBMC$logFC <=-0.5 & DE_PBMC$FDR < 0.05,"gene"]
+
+#Run to look at genes up in adult unstim
+enriched_go <- enrichr(c(genes_up), dbs_go)
+enriched_pathway <- enrichr(c(genes_up), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated in Adult Unstimulated MR1T Cells")
+
+#Run to look at genes up in cord blood unstim
+enriched_go <- enrichr(c(genes_down), dbs_go)
+enriched_pathway <- enrichr(c(genes_down), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated in Cord Blood Unstimulated MR1T Cells")
+```
+
+
+##Volcano plot for DE of Unstimulated Adult vs Cordblood
+```{r, echo = TRUE, fig.show='asis'}
+DE_PBMC$diffexpressed <- ""
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      & DE_PBMC$gene %in% c("GZMH", "PRF1", "CD8A", "CD8B2", "CCR5", "CXCR6", "CXCR3", "LTB", "FASLG", "ENO1", "ENO2", "ALDOC", "GAPDH", "PFKP", "PGAM5", "PGK1", "PKM", "CEBPD")
+                      ] <- "Adult Unstimulated"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05 
+                      & DE_PBMC$gene %in% c("SELL", "CCR7", "IL7R", "FUOM", "LEF1", "RGS10", "CCL3", "CCL3L3", "CCL4", "CCL4L2", "CCL23", "CCL18", "CCL1", "CCL22", "CCL24", "CCL8", "CCL13", "CCL7", "CCL2", "CXCL9", "CXCL12", "CXCL3", "CXCL16", "IFI30", "IFI27", "IFI44L", "IFIT3", "IFIT1", "IFI6", "IFI27L1", "IFI27L2", "ISG15", "MX2", "IRF4", "IRF9", "IRF8", "IRF1-AS1", "HERC5", "IFIT1", "IFIT3", "IL17C")
+                      ] <- "Cord Blood Unstimulated"
+
+DE_PBMC$delabel <- NA
+DE_PBMC$delabel[DE_PBMC$diffexpressed != ""] <- DE_PBMC$gene[DE_PBMC$diffexpressed != ""]
+
+a4 <- DE_PBMC %>% ggplot(aes(logFC, -log10(FDR), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+    geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("light grey", "dark red", "dark blue"))+ggtitle("Unstimulated") + theme(legend.position = "none") + theme(plot.title = element_text(hjust = 0.5, size = 20), axis.title.x = element_text(size = 14),  axis.title.y = element_text(size = 14), legend.text = element_text(size = 14), axis.text = element_text(size = 12))  +
+  labs(x = "Log Fold Change")
+a4
+```
+
+#Adult Stim vs Cord Blood Stim
+```{r}
+de_df <- de$`Adult.Stim-CB.Stim`$differential_expression$table
+DE_PBMC <- de$`Adult.Stim-CB.Stim`$differential_expression$table
+DE_PBMC <- de_df[de_df$FDR < 0.2, ]
+```
+
+##Pathway analysis (not shown in paper)
+```{r, echo = TRUE, fig.show='asis'}
+genes_up <- DE_PBMC[
+  DE_PBMC$logFC >=0.5 & DE_PBMC$FDR < 0.05,"gene"]
+
+genes_down <- DE_PBMC[
+  DE_PBMC$logFC <=-0.5 & DE_PBMC$FDR < 0.05,"gene"]
+
+#Run to look at genes up in adult stim
+enriched_go <- enrichr(c(genes_up), dbs_go)
+enriched_pathway <- enrichr(c(genes_up), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated in Adult Stimulated MR1T Cells")
+
+#Run to look at genes up in cord blood stim
+enriched_go <- enrichr(c(genes_down), dbs_go)
+enriched_pathway <- enrichr(c(genes_down), dbs_pathway)
+plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy = "P.value") + ggtitle("Upregulated in Cord Blood Stimulated MR1T Cells")
+```
+
+
+```{r}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Adult"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05 
+                      ] <- "Cord Blood"
+
+table(DE_PBMC$diffexpressed)
+```
+
+#Save supplemental table 7
+```{r}
+write.csv(DE_PBMC, "Supplemental Table 7.csv")
+```
+
+
+##Volcano plot for DE of Stimulated Adult vs Cordblood
+```{r, echo = TRUE, fig.show='asis'}
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
+                      & DE_PBMC$gene %in% c("IL26", "GZMH", "GZMM", "GNLY", "LTB", "RGCC", "TNFSF14", "NR4A3", "FASLG", "TNF", "IL32", "IL17RA", "ALDOC", "ENO2", "HK2", "PGAM1", "PGK1", "PKM", "PFKP", "CTLA4", "HAVCR2", "LAG3", "CD244", "TNFRSF14", "CD160", "CST7", "CD8A", "CCL28", "CCL5", "CXCR6", "GZMM", "GZMH", "GNLY")
+                      ] <- "Adult"
+DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05 
+                      & DE_PBMC$gene %in% c("IFI30", "IFI27", "IFI6", "IFIT3", "ISG15", "IRF9", "IRF8", "MX1", "IL7R", "CCR7", "CCL1", "CCL7", "CCL2", "CXCL9", "CXCL2", "CXCL3", "CXCL16")
+                      ] <- "Cordblood"
+
+DE_PBMC$delabel <- NA
+DE_PBMC$delabel[DE_PBMC$diffexpressed != "NO"] <- DE_PBMC$gene[DE_PBMC$diffexpressed != "NO"]
+
+b4 <- DE_PBMC %>% ggplot(aes(logFC, -log10(FDR), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+    geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("dark red", "dark blue", "light grey"))+ggtitle("Stimulated") + theme(plot.title = element_text(hjust = 0.5, size = 20), axis.title.x = element_text(size = 14),  axis.title.y = element_text(size = 14), legend.text = element_text(size = 14), legend.title = element_blank(), axis.text = element_text(size = 12)) +
+  labs(x = "Log Fold Change")
+
+Fig5GH <- a4 | b4
+Fig5GH
+```
