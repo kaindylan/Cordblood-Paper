@@ -13,7 +13,7 @@ setwd("~/Documents/data/CB Clones Analysis/Final")
 set.seed(19890623)
 ```
 
-# Load packages needed
+#load packages needed
 ```{r}
 library(CellMembrane)
 library(RIRA) 
@@ -35,17 +35,9 @@ setEnrichrSite("Enrichr") # Human genes
 dbs <- listEnrichrDbs()
 dbs_go <- c("GO_Biological_Process_2021")
 dbs_pathway <- c("MSigDB_Hallmark_2020", "BioCarta_2016", "Reactome_2022", "DSigDB", "WikiPathways_2019_Human", "KEGG_2021_Human", "DisGeNET", "WikiPathway_2021_Human", "HDSigDB_Human_2021")
-
-workDir <- "~/Documents/data/Ex-vivo CB Analysis"
-if (!dir.exists(workDir)) {
-  dir.create(workDir, recursive = T)
-}
-
-Rdiscvr::SetLabKeyDefaults(baseUrl = 'https://prime-seq.ohsu.edu', defaultFolder = 'Labs/Bimber/Collaborations/Lewinsohn')
-labkey.setDefaults(apiKey="e2e7adc179872bed31e7645be4f77ae9cef7904ef277295c08ba62e2ee93fd40")
 ```
 
-# Load necessary functions for pseudobulk
+#Load necessary functions for pseudobulk
 ```{r}
 RunPairwiseContrasts <- function(fit, test.use, logFC_threshold = 1){
   #create a nx2 array of all possible unique pairwise combinations of contrasts
@@ -64,7 +56,7 @@ RunPairwiseContrasts <- function(fit, test.use, logFC_threshold = 1){
 }
 ```
 
-# Load necessary TCR functions
+#Load necessary TCR functions
 ```{r}
 Plot_bar_topvalues <- function(so = NULL, feat = NULL, title="", thr = 1){
   if(is.null(so)) print("give a seurat object to so")
@@ -119,8 +111,7 @@ plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL,
 }
 ```
 
-
-# Load data files if changes
+#Load data files if changes
 ```{r}
 #saveRDS(seuratObj, file = "./CB_paper_seurat.rds")
 #saveRDS(seuratObjTRAVpos, file = "./CB_paper_TRAVpos.rds")
@@ -128,7 +119,7 @@ plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL,
 #saveRDS(seuratObj@meta.data, file = "./metadata.rds")
 ```
 
-# Load data files
+#Load data files
 ```{r}
 fn <- 'CB_paper_seurat.rds'
 seuratObj <- readRDS(fn)
@@ -143,7 +134,7 @@ meta <- readRDS("./metadata.rds")
 ```
 
 _____________
-# Figure 1a-c
+#Figure 1a-c
 ```{r, echo = TRUE, fig.show='asis'}
 a1 <- DimPlot(seuratObj, group.by = "Donor", cols = c("dark red", "dark blue")) +
   ggtitle("")  +  guides(color = guide_legend(override.aes = list(size=10), ncol=1)) +
@@ -322,9 +313,9 @@ DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05
                       ] <- "Cord blood"
 ```
 
-#Save supplemental table 4
+#Save supplemental table 1
 ```{r}
-write.csv(DE_PBMC, "Supplemental Table 4.csv")
+write.csv(DE_PBMC, "Supplemental Table 1.csv")
 ```
 
 #Volcano plot for DEGs of Adult vs Cordblood
@@ -747,7 +738,8 @@ df1 %>%
             shannon = shannon(Freq), 
             simpson = simpson(Freq),
             invsimpson = 1/simpson(Freq), 
-            n = sum(Freq))
+            n = sum(Freq)) %>% 
+  knitr::kable()
 ```
 
 #TRAJ
@@ -884,7 +876,7 @@ p2 <- plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", or
 
 ```
 
-#Generating supplemental table 5
+#Generating supplemental table 2
 ```{r}
 DE_PBMC$diffexpressed <- "NO"
 DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05 
@@ -892,7 +884,7 @@ DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05
 DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05 
                         ] <- "Cord Blood TRAV1-2- MR1T Cells"
 
-write.csv(DE_PBMC, "Supplemental Table 5.csv")
+write.csv(DE_PBMC, "Supplemental Table 2.csv")
 ```
 
 #Figure 3D - volcano plot of DEGs between TRAV1-2 and non-TRAV1-2 MR1Ts
@@ -1132,7 +1124,7 @@ DE_PBMC <- de$`Adult.Unstim-CB.Unstim`$differential_expression$table
 DE_PBMC <- de_df[de_df$FDR < 0.2, ]
 ```
 
-#generating supplemental table 6
+#generating supplemental table 3
 ```{r}
 DE_PBMC$diffexpressed <- "NO"
 DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
@@ -1144,7 +1136,7 @@ table(DE_PBMC$diffexpressed)
 ```
 
 ```{r}
-write.csv(DE_PBMC, "Supplemental Table 6.csv")
+write.csv(DE_PBMC, "Supplemental Table 3.csv")
 ```
 
 ##Pathway analysis (not shown in paper)
@@ -1223,9 +1215,9 @@ DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05
 table(DE_PBMC$diffexpressed)
 ```
 
-#Save supplemental table 7
+#Save supplemental table 4
 ```{r}
-write.csv(DE_PBMC, "Supplemental Table 7.csv")
+write.csv(DE_PBMC, "Supplemental Table 4.csv")
 ```
 
 
