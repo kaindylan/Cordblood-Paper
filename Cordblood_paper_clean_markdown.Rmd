@@ -35,6 +35,14 @@ setEnrichrSite("Enrichr") # Human genes
 dbs <- listEnrichrDbs()
 dbs_go <- c("GO_Biological_Process_2021")
 dbs_pathway <- c("MSigDB_Hallmark_2020", "BioCarta_2016", "Reactome_2022", "DSigDB", "WikiPathways_2019_Human", "KEGG_2021_Human", "DisGeNET", "WikiPathway_2021_Human", "HDSigDB_Human_2021")
+
+workDir <- "~/Documents/data/Ex-vivo CB Analysis"
+if (!dir.exists(workDir)) {
+  dir.create(workDir, recursive = T)
+}
+
+Rdiscvr::SetLabKeyDefaults(baseUrl = 'https://prime-seq.ohsu.edu', defaultFolder = 'Labs/Bimber/Collaborations/Lewinsohn')
+labkey.setDefaults(apiKey="e2e7adc179872bed31e7645be4f77ae9cef7904ef277295c08ba62e2ee93fd40")
 ```
 
 #Load necessary functions for pseudobulk
@@ -110,6 +118,7 @@ plot_bar_pairtopvalues_stacked <-function(so = NULL, feat1 = NULL, feat2 = NULL,
   
 }
 ```
+
 
 #Load data files if changes
 ```{r}
@@ -421,7 +430,7 @@ ggbetweenstats(
 ```
 
 __________
-#Supplemental Figure 2
+#Supplemental Figure 1
 ```{r}
 DefaultAssay(seuratObj) = "ADT"
 head(GetAssayData(seuratObj, slot = "data")[, 1:5])
@@ -738,8 +747,7 @@ df1 %>%
             shannon = shannon(Freq), 
             simpson = simpson(Freq),
             invsimpson = 1/simpson(Freq), 
-            n = sum(Freq)) %>% 
-  knitr::kable()
+            n = sum(Freq))
 ```
 
 #TRAJ
@@ -818,18 +826,18 @@ df1 %>%
             n = sum(Freq))
 ```
 
-#Supplemental Figure 4 - TRAV Surface Expression
+#Figure 3 - TRAV Surface Expression
 ```{r, echo = TRUE, fig.show='asis'}
 seuratObjCB = subset(seuratObj, Donor == "Cordblood")
 seuratObjCBTCR = subset(seuratObjCB, TRAV %in% c("non-TRAV1-2", "TRAV1-2"))
 
-Supplemental4 <- VlnPlot(seuratObjCBTCR, features = "adt_TCR-Va7.2", group.by = "TRAV") + 
+Figure3TRAV <- VlnPlot(seuratObjCBTCR, features = "adt_TCR-Va7.2", group.by = "TRAV") + 
   stat_summary(fun.y = median, geom='point', size = 25, colour = "dark red", shape = 95) +
   theme(legend.position = 'none') + 
   ggtitle("Cord Blood MR1T Cells Surface Protein Expression of TRAV1-2") +
   theme(axis.title.x = element_blank())
 
-Supplemental4
+Figure3TRAV
 ```
 
 #Supplemental - not shown. TRAJ usage of TRAV1-2 Positive vs Negative
@@ -843,7 +851,7 @@ seuratObjATRAVpos = subset(seuratObjTRAVpos, Donor == "Adult")
 Plot_bar_topvalues(so=seuratObjCBTRAVpos, feat = "TRA_J", title = "CB TRAV1-2+ TRAJ Usage", thr = 1) | Plot_bar_topvalues(so=seuratObjCBTRAVneg, feat = "TRA_J", title = "CB TRAV1-2- TRAJ Usage", thr = 1)
 ```
 
-#Figure 3D - DEGs of TRAV1-2+ vs non-TRAV1-2
+#Figure 4D - DEGs of TRAV1-2+ vs non-TRAV1-2
 ```{r}
 Idents(seuratObjCBTCR) = "TRAV"
 DE_PBMC  = FindMarkers(seuratObjCBTCR, ident.1 = c("TRAV1-2"), ident.2 = c("non-TRAV1-2"), logfc.threshold = 0.5, test.use = "wilcox", min.pct = 0, min.diff.pct = 0, min.cells.feature = 2, min.cells.group = 2)
@@ -887,7 +895,7 @@ DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05
 write.csv(DE_PBMC, "Supplemental Table 2.csv")
 ```
 
-#Figure 3D - volcano plot of DEGs between TRAV1-2 and non-TRAV1-2 MR1Ts
+#Figure 4D - volcano plot of DEGs between TRAV1-2 and non-TRAV1-2 MR1Ts
 ```{r, echo = TRUE, fig.show='asis'}
 #Volcano Plot
 DE_PBMC$diffexpressed <- ""
@@ -901,7 +909,7 @@ DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05
 DE_PBMC$delabel <- NA
 DE_PBMC$delabel[DE_PBMC$diffexpressed != ""] <- DE_PBMC$gene[DE_PBMC$diffexpressed != ""]
 
-Fig3D <- DE_PBMC %>% ggplot(aes(avg_log2FC, -log10(p_val_adj), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+Fig4D <- DE_PBMC %>% ggplot(aes(avg_log2FC, -log10(p_val_adj), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
     geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("light grey", "dark blue", "dark red"))+ggtitle("Differential Expression of Cord Blood TRAV1-2 Positive vs Negative MR1T Cells") +
   theme(legend.title = element_blank(),
         axis.text = element_text(size = 12),
@@ -909,10 +917,10 @@ Fig3D <- DE_PBMC %>% ggplot(aes(avg_log2FC, -log10(p_val_adj), col = diffexpress
         axis.title.y = element_text(size = 18), 
         legend.text = element_text(size = 14), 
         plot.title = element_text(hjust = 0.5, size = 22)) 
-Fig3D
+Fig4D
 ```
 
-#Supplemental Figure 5 - Difference in TRAV1-2+ Adult vs Cord blood 
+#Figure 5 - Difference in TRAV1-2+ Adult vs Cord blood 
 ```{r, echo = TRUE, fig.show='asis'}
 seuratObjTRAVpos <- 
   Seurat::AddModuleScore(seuratObjTRAVpos, 
@@ -925,7 +933,7 @@ seuratObjTRAVpos <- UCell::AddModuleScore_UCell(seuratObjTRAVpos,
                                                   list("MySignature" = 
                                                       RIRA::GetGeneSet("Cytotoxicity")))
 
-Sup5a <- VlnPlot(seuratObjTRAVpos, 
+Fig5a <- VlnPlot(seuratObjTRAVpos, 
                  features = "MySignature1", 
                  group.by = "Donor")+
   stat_summary(fun.y = median, 
@@ -939,7 +947,7 @@ Sup5a <- VlnPlot(seuratObjTRAVpos,
   ggtitle("Cytotoxicity TRAV1-2+ Cells")
 
 Idents(seuratObjTRAVpos) = "Donor"
-Sup5b <- FeaturePlot(seuratObjTRAVpos, 
+Fig5b <- FeaturePlot(seuratObjTRAVpos, 
                      features = "MySignature1", 
                      label = TRUE, 
                      label.color = "black", 
@@ -953,7 +961,7 @@ Sup5b <- FeaturePlot(seuratObjTRAVpos,
   scale_colour_gradientn(colours = 
                            c("#2E5DAA", "dodgerblue", "lightblue", "gold", "red", "darkred"))
 
-Sup5a | Sup5b
+Fig5a | Fig5b
 ```
 
 #generate statistics for cytotoxicity score
@@ -1018,7 +1026,7 @@ fn <- 'CB_clone_seurat.rds'
 seuratObj2 <- readRDS(fn)
 ```
 
-#Figure 5A-F
+#Figure 7A,B
 ```{r, echo = TRUE, fig.show='asis'}
 Idents(seuratObj2) = "StimulationCellType"
 my_levels <- c("Adult Unstim", "Adult Stim", "CB Unstim", "CB Stim")
@@ -1059,55 +1067,11 @@ CSF2 <- VlnPlot(seuratObj2, features = c("CSF2"), split.by = "StimulationCellTyp
         axis.text.x = element_text(size = 16),
         plot.title = element_text(size = 20))
 
-Fig5 <- ggarrange(IFNG, TNF, GZMB, CCL3, CCL4, CSF2)
-Fig5
+Fig7A <- ggarrange(IFNG, TNF, GZMB, CCL3, CCL4, CSF2)
+Fig7A
 ```
 
-#Supplemental Figure 8
-```{r}
-Idents(seuratObj2) = "SubjectId"
-
-IFNG <- VlnPlot(seuratObj2, features = c("IFNG"), split.by = "StimulationCellType") + stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-TNF <- VlnPlot(seuratObj2, features = c("TNF"), split.by = "StimulationCellType") +
-  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-GZMB <- VlnPlot(seuratObj2, features = c("GZMB"), split.by = "StimulationCellType") +
-  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-CCL3 <- VlnPlot(seuratObj2, features = c("CCL3"), split.by = "StimulationCellType") +
-  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-CCL4 <- VlnPlot(seuratObj2, features = c("CCL4"), split.by = "StimulationCellType") +
-  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-CSF2 <- VlnPlot(seuratObj2, features = c("CSF2"), split.by = "StimulationCellType") +
-  stat_summary(fun.y = mean, geom='point', size = 25, colour = "dark red", shape = 95) + theme(legend.position = 'none') + 
-  theme(axis.title.x = element_blank(), 
-        axis.text.x = element_text(size = 16),
-        plot.title = element_text(size = 20))
-
-Supp_Clone <- ggarrange(IFNG, TNF, GZMB, CCL3, CCL4, CSF2)
-Supp_Clone
-```
-
-
-#Figure 5g-h pseudobulk analysis
+#Figure 7B and Supplemental Figure 5 pseudobulk analysis
 ```{r}
 pbulk <- CellMembrane::PseudobulkSeurat(seuratObj2, groupFields = c("StimulationCellType", "cDNA_ID"))
 
@@ -1159,7 +1123,7 @@ plotEnrich(enriched_go[[1]], showTerms = 20, numChar = 40, y = "Count", orderBy 
 ```
 
 
-##Volcano plot for DE of Unstimulated Adult vs Cordblood
+##Supplemental Figure 5 - Volcano plot for DE of Unstimulated Adult vs Cordblood
 ```{r, echo = TRUE, fig.show='asis'}
 DE_PBMC$diffexpressed <- ""
 DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
@@ -1215,7 +1179,7 @@ DE_PBMC$diffexpressed[DE_PBMC$logFC < -0.5 & DE_PBMC$FDR < 0.05
 table(DE_PBMC$diffexpressed)
 ```
 
-#Save supplemental table 4
+#Save supplemental table 7
 ```{r}
 write.csv(DE_PBMC, "Supplemental Table 4.csv")
 ```
@@ -1238,6 +1202,6 @@ b4 <- DE_PBMC %>% ggplot(aes(logFC, -log10(FDR), col = diffexpressed, label = de
     geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("dark red", "dark blue", "light grey"))+ggtitle("Stimulated") + theme(plot.title = element_text(hjust = 0.5, size = 20), axis.title.x = element_text(size = 14),  axis.title.y = element_text(size = 14), legend.text = element_text(size = 14), legend.title = element_blank(), axis.text = element_text(size = 12)) +
   labs(x = "Log Fold Change")
 
-Fig5GH <- a4 | b4
-Fig5GH
+Fig7B <- b4
+Fig7B
 ```
