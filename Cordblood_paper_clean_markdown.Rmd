@@ -974,6 +974,49 @@ ggbetweenstats(
 )
 ```
 
+#Supplemental Table 3 - DEGs CB MAITs vs Adult MAITs
+```{r}
+Idents(seuratObjTRAVpos) = "Donor"
+DE_PBMC  = FindMarkers(seuratObjTRAVpos, ident.1 = c("Adult"), ident.2 = c("Cordblood"), logfc.threshold = 0.5, test.use = "wilcox", min.pct = 0.2, min.diff.pct = 0.1, min.cells.feature = 2, min.cells.group = 2)
+
+de_df <- DE_PBMC
+DE_PBMC <- tibble::rownames_to_column(DE_PBMC, "gene")
+
+DE_PBMC$diffexpressed <- "NO"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05 
+                      ] <- "Adult MAIT Cells"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05 
+                        ] <- "Cord Blood MAIT Cells"
+
+write.csv(DE_PBMC, "Supplemental Table 3.csv")
+```
+
+#Figure 5C - DEGs of CB vs Adult MAITs
+```{r}
+#Volcano Plot
+DE_PBMC$diffexpressed <- ""
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC > 0.5 & DE_PBMC$p_val_adj < 0.05 
+                      & DE_PBMC$gene %in% c("GZMA", "GZMB", "GZMK", "GZMM", "GZMH", "GNLY", "PRF1", "NKG7", "CST7", "CCL5", "IL32", "KLRG1", "CCL4", "KLRD1")
+                      ] <- "Adult MAIT Cells"
+DE_PBMC$diffexpressed[DE_PBMC$avg_log2FC < -0.5 & DE_PBMC$p_val_adj < 0.05 
+                      & DE_PBMC$gene %in% c("LEF1", "CCR7", "SELL", "TCF7", "VEGFA", "VEGFB")
+                        ] <- "Cordblood MAIT Cells"
+
+DE_PBMC$delabel <- NA
+DE_PBMC$delabel[DE_PBMC$diffexpressed != ""] <- DE_PBMC$gene[DE_PBMC$diffexpressed != ""]
+
+Fig5C <- DE_PBMC %>% ggplot(aes(avg_log2FC, -log10(p_val_adj), col = diffexpressed, label = delabel)) + geom_point() + theme_minimal() + geom_text_repel(max.overlaps = 50, size = 4) + geom_vline(xintercept=c(-0.5, 0.5), col="dark red") +
+    geom_hline(yintercept=-log10(0.05), col="dark red") + scale_color_manual(values = c("light grey", "dark blue", "dark red"))+ggtitle("Differential Expression of Cord Blood vs Adult MAIT Cells") +
+  theme(legend.title = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 18), 
+        axis.title.y = element_text(size = 18), 
+        legend.text = element_text(size = 14), 
+        plot.title = element_text(hjust = 0.5, size = 22)) 
+Fig5C
+```
+
+
 #Additional TRAV1-2 expression plots, not included in paper
 ```{r}
 meta1 <- meta %>% 
@@ -1088,7 +1131,7 @@ DE_PBMC <- de$`Adult.Unstim-CB.Unstim`$differential_expression$table
 DE_PBMC <- de_df[de_df$FDR < 0.2, ]
 ```
 
-#generating supplemental table 3
+#generating supplemental table 4
 ```{r}
 DE_PBMC$diffexpressed <- "NO"
 DE_PBMC$diffexpressed[DE_PBMC$logFC > 0.5 & DE_PBMC$FDR < 0.05 
@@ -1100,7 +1143,7 @@ table(DE_PBMC$diffexpressed)
 ```
 
 ```{r}
-write.csv(DE_PBMC, "Supplemental Table 3.csv")
+write.csv(DE_PBMC, "Supplemental Table 4.csv")
 ```
 
 ##Pathway analysis (not shown in paper)
@@ -1181,7 +1224,7 @@ table(DE_PBMC$diffexpressed)
 
 #Save supplemental table 7
 ```{r}
-write.csv(DE_PBMC, "Supplemental Table 4.csv")
+write.csv(DE_PBMC, "Supplemental Table 5.csv")
 ```
 
 
@@ -1205,3 +1248,4 @@ b4 <- DE_PBMC %>% ggplot(aes(logFC, -log10(FDR), col = diffexpressed, label = de
 Fig7B <- b4
 Fig7B
 ```
+
